@@ -1,0 +1,109 @@
+## PREPARATION
+# Data Management/Investigation
+import pandas as pd
+import numpy as np
+import missingno as miss
+from plotnine import *
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore")
+
+import geopandas as gpd
+import mapclassify
+import seaborn as sns
+
+# Load in the data
+sbux_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/directory.csv")
+sbux_dta.head(10)
+
+fig = miss.matrix(sbux_dta)
+fig_copy = fig.get_figure()
+fig_copy.savefig('fig2.png', bbox_inches = 'tight')
+
+sbux_dta = sbux_dta.rename(columns= {'State/Province': 'State'})
+sbux_dta['Ownership Type'].unique()
+
+sbux_dta = sbux_dta.drop(columns = ['Phone Number', 'Timezone'])
+sbux_dta = sbux_dta[sbux_dta.Brand == 'Starbucks']
+sbux_dta = sbux_dta[sbux_dta.Country == 'US']
+sbux_dta.isna().sum()
+sbux_dta.head()
+# Total by state
+type(state_sbux)
+state_sbux = pd.DataFrame(sbux_dta.groupby('State').count())
+state_sbux = state_sbux.rename(columns = {'Store Name': 'Num of Stores'})
+state_sbux = state_sbux[["Num of Stores"]]
+state_sbux['State'] = homeval_dta_selected.index
+state_sbux
+
+(
+    ggplot(sbux_dta, aes(fill = "Ownership Type", x = "State")) +
+    geom_bar() +
+    facet_wrap("Brand",scales='free') +
+    theme(figure_size=(15,7),
+          subplots_adjust={'wspace':0.25,
+                           'hspace':0.75},
+         axis_text_x=element_text(rotation=45, hjust=1)) +
+    scale_fill_manual(values=("#00754a", "#c89542"))
+)
+
+map_usa = gpd.read_file("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/cb_2017_us_state_20m/cb_2017_us_state_20m.shp")
+map_usa = map_usa.drop([51])
+map_usa.columns
+map_usa = map_usa.rename(columns = {'STUSPS': 'State'})
+#int((map_usa.loc[map_usa['NAME'] == "Puerto Rico"]).index)
+
+# merge usa_state data and geo_usa shapefile
+geo_merge = map_usa.merge(state_sbux, on = 'State')
+geo_merge.head()
+# plot USA map
+US_sbux_map = (geo_merge.plot(column='Num of Stores', scheme="quantiles",figsize=(20, 10),legend=True,cmap='Greens'), plt.xlim(-130, -60), plt.ylim(20, 55), plt.title('Figure 4: Starbucks locations by State',fontsize=25))
+fig_copy = US_sbux_map.get_figure()
+fig_copy.savefig('fig4.png', bbox_inches = 'tight')
+
+## CENSUS HOUSING DATA
+# Load in the data
+rent_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/Metro_ZORI_AllHomesPlusMultifamily_SSA.csv")
+rent_dta.head(5)
+# split column and add new columns to df
+rent_dta[['City', 'State']] = rent_dta['RegionName'].str.split(',', expand=True)
+
+rent_dta['State'].unique()
+
+homeval_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv")
+homeval_dta = homeval_dta.dropna(subset=['StateName'])
+homeval_dta = homeval_dta.drop(columns = ['RegionID', 'SizeRank', 'RegionType'])
+homeval_dta.head()
+
+homeval_dta_2016 = homeval_dta.filter(regex='2016')
+homeval_dta_2017 = homeval_dta.filter(regex='2017')
+homeval_dta_2018 = homeval_dta.filter(regex='2017')
+
+
+'''
+avg_state_homeval = round(homeval_dta_selected.groupby('StateName').mean(), 2)
+
+homeval_dta_WA = homeval_dta_selected[homeval_dta_selected["StateName"] == "WA"]
+homeval_dta_WA.columns
+homeval_dta_WA = homeval_dta_WA.drop(columns = ['StateName'])
+homeval_dta_WA.head()
+
+ash_melt = homeval_dta_WA.melt('RegionName', var_name='date', value_name='price')
+ash_melt
+sns.scatterplot(data=ash_melt, x="date", y="price
+'''
+
+homeval_dta_selected = homeval_dta[['RegionName', 'StateName']]
+homeval_dta_selected = pd.concat([homeval_dta_selected, homeval_dta_2017], axis = 1)
+homeval_dta_selected = homeval_dta_selected.drop(columns = 'RegionName')
+homeval_dta_selected = round(homeval_dta_selected.groupby('StateName').mean(), 2)
+homeval_dta_selected['State'] = homeval_dta_selected.index
+homeval_dta_selected = homeval_dta_selected[['State', '2017-02-28']]
+state_sbux = state_sbux.drop(columns = 'State')
+homeval_dta_selected.head()
+stores_home_merge = state_sbux.merge(homeval_dta_selected[['State', '2017-02-28']], on='State')
+stores_home_merge = stores_home_merge.rename(columns= {'2017-02-28': 'Home Price'})
+stores_home_merge = round(stores_home_merge['Home Price'], 2)
+sns.scatterplot(data=stores_home_merge, x="Num of Stores", y="Home Price", color="#00754a")
+for r in range(stores_home_merge['State'].count()):
+    plt.text(x = (stores_home_merge.iloc[r]['Num of Stores'] + 10), y = (stores_home_merge.iloc[r]['Home Price'] + 2500), s = stores_home_merge.iloc[r]['State'], c = "#a17700", size = 15)

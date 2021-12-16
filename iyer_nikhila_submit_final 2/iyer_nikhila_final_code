@@ -1,0 +1,262 @@
+# Data Management/Investigation
+import pandas as pd
+import numpy as np
+import missingno as miss
+from plotnine import *
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore")
+
+# For pre-processing data
+from sklearn import preprocessing as pp
+from sklearn.compose import ColumnTransformer
+
+# For splits and CV
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold # Cross validation
+from sklearn.model_selection import cross_validate # Cross validation
+from sklearn.model_selection import GridSearchCV # Cross validation + param. tuning.
+
+# Machine learning methods
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier as KNN
+from sklearn.tree import DecisionTreeClassifier as DTree
+from sklearn.ensemble import RandomForestClassifier as RF
+
+# For evaluating our model's performance
+import sklearn.metrics as m
+
+# Pipeline to combine modeling elements
+from sklearn.pipeline import Pipeline
+
+# For model interpretation
+from sklearn.inspection import (
+    permutation_importance,
+    partial_dependence,
+    PartialDependenceDisplay,
+    plot_partial_dependence
+)
+# Load in the data
+sbux_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/directory.csv")
+sbux_dta.head()
+
+# Check for missingness
+miss.matrix(sbux_dta)
+
+# Drop the ph number and time zone columns (most missingness)
+sbux_dta = sbux_dta.drop(columns = ['Phone Number', 'Timezone'])
+
+# Restrict to just United States and Starbucks brand store
+#sbux_dta['Brand'].unique()
+sbux_dta = sbux_dta[sbux_dta.Brand == 'Starbucks']
+sbux_dta = sbux_dta[sbux_dta.Country == 'US']
+sbux_dta = sbux_dta.rename(columns= {'State/Province': 'State'})
+sbux_dta['city'] = sbux_dta['City'] + ", " + sbux_dta['State']
+
+# Making all zip codes only 5 numbers long, to match across data
+sbux_dta.Postcode = sbux_dta.Postcode.str.slice(stop=5)
+
+# Total by city
+city_sbux = pd.DataFrame(sbux_dta.groupby('city').count())
+city_sbux.reset_index(level=0, inplace=True)
+city_sbux = city_sbux.rename(columns= {'Store Number': 'store_count'})
+city_sbux = city_sbux[['city', 'store_count']]
+city_sbux.head()
+
+
+## COUNTIES // CITIES
+county_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/uscities.csv")
+county_dta = county_dta.rename(columns= {'county_name': 'County'})
+county_dta['County'] = county_dta['County'] + " (" + county_dta['state_id'] + ")"
+county_dta.head(5)
+
+## EDUCATION
+educ_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/Education.csv")
+educ_dta.head(10)
+educ_dta = educ_dta.dropna()
+educ_dta = educ_dta.rename(columns= {'Area name': 'County'})
+educ_dta = educ_dta[educ_dta['County'].str.contains('County')]
+educ_dta['County'] = educ_dta['County'].str.replace(' County', '')
+educ_dta['County'] = educ_dta['County'] + " (" + educ_dta['State'] + ")"
+educ_dta = educ_dta.rename(columns= {'Percent of adults with a bachelor\'s degree or higher, 2015-19': 'pct_college'})
+educ_dta_ap = educ_dta[['County', 'pct_college']]
+educ_dta_ap
+
+## CENSUS HOUSING DATA
+homeval_dta = pd.read_csv("/Users/nikhilaiyer/Documents/GRAD SCHOOL/(ppol564) dsi/Project/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv")
+homeval_dta = homeval_dta.dropna(subset=['StateName'])
+homeval_dta_2016 = homeval_dta.filter(regex='2016')
+homeval_dta = homeval_dta[['RegionName']]
+homeval_dta = homeval_dta.rename(columns= {'RegionName': 'city'})
+homeval_dta = pd.concat([homeval_dta, homeval_dta_2016], axis = 1)
+homeval_dta['avg_2016'] = round(homeval_dta.mean(axis=1), 2)
+homeval_dta.head()
+homeval_dta_ap = homeval_dta[['city', 'avg_2016']]
+len(homeval_dta_ap.city.unique())
+len(gent_dta)
+homeval_dta_ap.head(45)
+gent_dta.head()
+
+## GENTRIFICATION DATA
+gent_dta = county_dta[['city', 'state_id', 'County', 'density']]
+gent_dta = gent_dta.merge(educ_dta_ap, on = 'County')
+gent_dta['city'] = gent_dta['city'] + ", " + gent_dta['state_id']
+gent_dta = homeval_dta_ap.merge(gent_dta, how = 'inner', on = 'city')
+gent_dta = city_sbux.merge(gent_dta, how = 'right',on = 'city')
+gent_dta['store_count'] = gent_dta['store_count'].fillna(0)
+
+gent_mod = gent_dta[['store_count', 'avg_2016', 'density', 'pct_college']]
+gent_mod['store_ck'] = np.where(gent_dta['store_count'] >= 1, 1, 0)
+gent_mod = gent_mod.drop(columns = 'store_count')
+gent_mod.loc[gent_mod['avg_2016'].isna(), 'avg_2016'] = 0
+
+gent_mod.isna().sum()
+
+# Plot the int variables
+int = gent_mod.select_dtypes(include="int").melt()
+(
+    ggplot(int,aes(x="value")) +
+    geom_histogram(bins=25) +
+    facet_wrap("variable",scales='free') +
+    theme(figure_size=(10,3),
+          subplots_adjust={'wspace':0.25})
+)
+
+# Plot the cont variables
+cont = gent_mod.select_dtypes(include="float").melt()
+(
+    ggplot(cont,aes(x="value")) +
+    geom_histogram(bins=25) +
+    facet_wrap("variable",scales='free') +
+    theme(figure_size=(10,3),
+          subplots_adjust={'wspace':0.25})
+)
+
+## MODELING
+#### (1) Split the data (75% train, 25% test)
+train = gent_mod.sample(frac=.75).reset_index(drop=True)
+test = gent_mod.drop(train.index).reset_index(drop=True)
+
+# Print off the split count to check
+print("Training Data:",train.shape[0],
+      "\nTest Data:",test.shape[0])
+
+# Set the outcome and predictor variables in each data set
+# OUTCOME: store status (y / n)
+train_y = train['store_ck']
+test_y = test['store_ck']
+
+# PREDICTORS:
+train_x = train.drop(columns=['store_ck'])
+test_x = test.drop(columns=['store_ck'])
+
+## PIPELINE
+# (1) Set the folds index to ensure comparable samples
+fold_generator = KFold(n_splits = 5, shuffle = True, random_state = 123)
+
+# (2) Next specify the preprocessing steps
+preprocess = ColumnTransformer(transformers=[('num', pp.MinMaxScaler(),
+            ['avg_2016', 'density', 'pct_college'])])
+
+# (3) Next Let's create our model pipe (note for the model we leave none as a placeholder)
+pipe = Pipeline(steps=[('pre_process', pp.MinMaxScaler()),('model', None)])
+
+# (4) Specify the models and their repsective tuning parameters.
+# Note the naming convention here to reference the model key
+search_space = [
+    # NaiveBayes
+    {'model': [GaussianNB()]},
+
+    # KNN with K tuning param
+    {'model' : [KNN()],
+     'model__n_neighbors':[5,10,25,50]},
+
+    # Decision Tree with the Max Depth Param
+    {'model': [DTree()],
+     'model__max_depth':[2,3,4]},
+
+    # Random forest with the N Estimators tuning param
+    {'model' : [RF()],
+    'model__max_depth':[2,3,4],
+    'model__n_estimators':[500,1000,1500]}
+]
+
+# (5) Put it all together in the grid search
+search = GridSearchCV(pipe, search_space,
+                      cv = fold_generator,
+                      scoring='roc_auc',
+                      n_jobs=4)
+
+# (6) Fit the model to the training data
+search.fit(train_x, train_y)
+
+search.best_score_
+search.best_params_
+rf_mod = search.best_estimator_
+
+m.roc_auc_score(train_y, rf_mod.predict_proba(train_x)[:, 1])
+m.accuracy_score(train_y, rf_mod.predict(train_x))
+
+## Random Forest
+RF().get_params()
+rf_params = {'max_depth':[1,2,3],
+             'n_estimators':[100,500,1000,2000],
+              'max_features': [1,2,3]}
+tune_rf = GridSearchCV(RF(),rf_params,
+                        cv = fold_generator,
+                        scoring='neg_mean_squared_error',
+                        n_jobs=4)
+
+tune_rf.fit(train_x, train_y)
+tune_rf.best_params_
+tune_rf.best_score_
+m.accuracy_score(train_y, tune_rf.predict(train_x))
+
+## Don't forget to repeat min 25 times -- takes longer!
+vi = permutation_importance(rf_mod, train_x, train_y, n_repeats=25)
+
+# Organize as a data frame
+vi_dat = pd.DataFrame(dict(variable=train_x.columns,
+                           vi = vi['importances_mean'],
+                           std = vi['importances_std']))
+
+# Generate intervals
+vi_dat['low'] = vi_dat['vi'] - 2*vi_dat['std']
+vi_dat['high'] = vi_dat['vi'] + 2*vi_dat['std']
+
+# But in order from most to least important
+vi_dat = vi_dat.sort_values(by="vi",ascending=False).reset_index(drop=True)
+
+vi_dat.head()
+
+# Plot
+(
+    ggplot(vi_dat,
+          aes(x="variable",y="vi")) +
+    geom_col(alpha=.5) +
+    geom_point() +
+    geom_errorbar(aes(ymin="low",ymax="high"),width=.2) +
+    theme_bw() +
+    scale_x_discrete(limits=vi_dat.variable.tolist()) +
+    coord_flip() +
+    labs(y="Reduction in AUC ROC",x="Predictive Variables", title="Figure 5: Permutation Variable Importance")
+)
+
+imp_feat = ['pct_college']
+fig, ax = plt.subplots(figsize=(20, 7))
+figure5 = PartialDependenceDisplay.from_estimator(
+    rf_mod,
+    train_x,
+    imp_feat,
+    kind="both", # "average" = just PDP, "individual" = just ICE
+    subsample=50,
+    n_jobs=3,
+    grid_resolution=20,
+    random_state=0,
+    ice_lines_kw={"color": "#036241", "alpha": 0.2, "linewidth": 0.5},
+    pd_line_kw={"color": "#eed350", "linestyle": "--"},
+    n_cols=len(['pct_college', 'avg_2016', 'density']),
+    ax = ax
+)
+fig.suptitle('Figure 6: ICE Plot - Percent of Adult Population that has a College Degree or Higher')
+figure5.figure_.subplots_adjust(hspace=0.3)
